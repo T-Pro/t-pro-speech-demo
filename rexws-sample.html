@@ -1,0 +1,151 @@
+<html>
+<head>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+    <script>
+      let details = null;
+
+      async function login(username, password) {
+        const response = await fetch('https://rexapi.tpro.io/api/v1/users/auth', {
+          method: 'POST',
+          headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+          body: JSON.stringify({username, password})
+        })
+        details = await response.json();
+      }
+
+      let socket = null;
+
+      function connect() {
+        const {token} = details;
+        socket = io('https://rexws.tpro.io/', {query: {token}})
+        socket.on('frontend-result', data => {
+          if (data.final) {
+            const s = document.querySelector('#output-result');
+            s.appendChild(document.createTextNode(data.words[0]));
+            s.appendChild(document.createElement('br'))
+          } else {
+            document.querySelector('#output-preview').textContent = data.words[0]
+          }
+        })
+        socket.on('validate', data => {
+          console.log({validate: data})
+        })
+        socket.on('monitor', data => {
+          console.log({validate: data})
+        })
+        socket.on('open', data => {
+          console.log({open: data})
+        })
+        socket.on('connect_error', data => {
+          console.log(data);
+        })
+        socket.on('connect', data => {
+          console.log({connect: data})
+        })
+      }
+
+      async function emit(...args) {
+        return new Promise((resolve, reject) => {
+          socket.emit(...args, (err, data) => {
+            err ? reject(err) : resolve(data)
+          })
+        })
+      }
+
+      let dictation = null;
+
+      async function create() {
+        socket.emit('ping')
+        dictation = await emit('dictations', 'create', {
+          type: 'frontend',
+          author: details._id,
+          engine: details.settings.engineId,
+          language: details.settings.languageId,
+          topic: details.settings.topicId
+        })
+        localStorage.dictationAudio = dictation.audio
+      }
+
+      let asr = null
+
+      async function init() {
+        localStorage.asr = await emit('frontendvr', 'init', {audio: localStorage.dictationAudio})
+      }
+
+      async function start() {
+        const files = document.querySelector('#audio-file').files
+        if (files.length === 0) {
+          alert('Select a file before')
+          return
+        }
+        await emit('frontendvr', 'start', {audio: localStorage.dictationAudio})
+        const file = files[0]
+        const CHUNK_SIZE = 1600;
+
+        for (let pos = 44; pos < file.size; pos += CHUNK_SIZE) {
+          const p = new Promise(r => setTimeout(r, CHUNK_SIZE / 32))
+          const chunk = await file.slice(pos, pos + CHUNK_SIZE).arrayBuffer();
+          const v = await emit('frontendvr', 'data', chunk)
+          await p; // wait for same chunk playback duration
+          if (v.status === 'error') {
+            console.error(v)
+            return;
+          }
+        }
+        await emit('frontendvr', 'stop')
+        if (document.querySelector('#repeat').checked) {
+          setTimeout(start, 4000);
+        }
+      }
+
+    </script>
+
+</head>
+<body>
+<p style="background-image: url('assets/bg-top.jpg');">
+    <img src="assets/logo.svg" alt="T-Pro logo" class="logo"/>
+</a>
+
+<div>
+<label for="username">user</label><input type="text" id="username">
+<label for="password">password</label> <input type="password" id="password">
+<button id="login-btn">login</button>
+</div>
+
+<hr>
+
+<button id="connect-btn">connect</button>
+<button id="create-btn">create</button>
+<button id="init-btn">init</button>
+<input id="audio-file" type="file" accept="audio/wav *.wav">
+<br>
+
+<button id="start-btn">start</button>
+<label for="repeat"><input type="checkbox" name="repeat" id="repeat">Repeat</label>
+<br>
+
+Preview:
+<div id="output-preview"></div>
+Final:
+<div id="output-result"></div>
+</body>
+<script>
+  document.querySelector('#connect-btn').addEventListener('click', connect)
+  document.querySelector('#create-btn').addEventListener('click', create)
+  document.querySelector('#init-btn').addEventListener('click', init)
+  document.querySelector('#start-btn').addEventListener('click', start)
+  if (localStorage.username && localStorage.password) {
+    login(
+      document.querySelector('#username').value = localStorage.username,
+      document.querySelector('#password').value = localStorage.password
+    )
+  }
+  document.querySelector('#login-btn').addEventListener('click', () => {
+    login(
+      localStorage.username = document.querySelector('#username').value,
+      localStorage.password = document.querySelector('#password').value
+    )
+  })
+</script>
+</html>
